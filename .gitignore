@@ -1,0 +1,8 @@
+node_modules
+dist
+*.vsix
+.vscode-test
+.devledger
+devledger-activity.svg
+.DS_Store
+*.log

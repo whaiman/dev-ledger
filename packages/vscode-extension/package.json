@@ -1,0 +1,26 @@
+{
+    "name": "devledger",
+    "version": "0.1.0",
+    "publisher": "whaiman",
+    "displayName": "DevLedger",
+    "description": "Local append-only coding activity ledger",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/whaiman/dev-ledger"
+    },
+    "main": "./dist/extension.js",
+    "activationEvents": [
+        "*"
+    ],
+    "engines": {
+        "vscode": "^1.85.0"
+    },
+    "scripts": {
+        "build": "tsup"
+    },
+    "devDependencies": {
+        "@devledger/core": "workspace:*",
+        "@types/vscode": "^1.85.0",
+        "tsup": "^8.5.1"
+    }
+}
