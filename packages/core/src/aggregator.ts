@@ -1,7 +1,8 @@
 import type { DevEvent, DevStats } from "./types.js";
-import { analyzeBehavior } from "./behaviorAnalyzer.js";
+import { analyzeBehavior, extractEditSamples } from "./behavior-analyzer.js";
+import { minimatch } from "minimatch";
 
-export function aggregate(events: DevEvent[], filterProject?: string): DevStats {
+export function aggregate(events: DevEvent[], filterProject?: string, ignorePatterns: string[] = []): DevStats {
   const stats: DevStats = {
     totalMs: 0,
     idleMs: 0,
@@ -16,10 +17,9 @@ export function aggregate(events: DevEvent[], filterProject?: string): DevStats 
 
   if (events.length === 0) return stats;
 
-  // Initialize hours
   for (let h = 0; h < 24; h++) stats.byHour[h] = 0;
 
-  // 1. Filter by latest reset per project
+  // 1. Find latest reset per project
   const projectResets: Record<string, number> = {};
   for (let i = 0; i < events.length; i++) {
     if (events[i].type === "checkpoint" && events[i].label === "reset") {
@@ -30,21 +30,28 @@ export function aggregate(events: DevEvent[], filterProject?: string): DevStats 
   const filteredEvents = events.filter((e, i) => {
     if (filterProject && e.project !== filterProject) return false;
     const resetIdx = projectResets[e.project] ?? -1;
-    return i > resetIdx;
+    if (i <= resetIdx) return false;
+    if (e.file && ignorePatterns.length > 0 && ignorePatterns.some(p => minimatch(e.file!, p))) return false;
+    return true;
   }).sort((a, b) => a.timestamp - b.timestamp);
 
   if (filteredEvents.length === 0) return stats;
 
-  // Run behavior analysis (Local AI)
-  stats.humanityScore = analyzeBehavior(filteredEvents);
+  // 2. Behavior analysis
+  const editSamples = extractEditSamples(filteredEvents);
+  const profile = analyzeBehavior(editSamples);
+  stats.humanityScore = {
+    score: profile.humanityScore / 100,
+    reasons: profile.signals.map(s => s.description),
+  };
+  stats.signals.push(...profile.signals.map(s => s.description));
 
   stats.eventCount = filteredEvents.length;
   stats.sessionCount = 1;
 
-  const SESSION_THRESHOLD_MS = 5 * 60_000; // 5 minutes
+  const SESSION_THRESHOLD_MS = 5 * 60_000;
 
   let lastEvent = filteredEvents[0];
-  let burstCount = 0;
 
   for (let i = 1; i < filteredEvents.length; i++) {
     const current = filteredEvents[i];
@@ -52,19 +59,7 @@ export function aggregate(events: DevEvent[], filterProject?: string): DevStats 
 
     if (current.metadata?.is_large_paste) {
       const time = new Date(current.timestamp).toLocaleTimeString();
-      stats.signals.push(`Large paste detected at ${time} in ${current.file || 'unknown'}`);
-    }
-
-    // 3.6 Behavior Analysis: Burst Editing Detection
-    if (current.type === "file_edit" && lastEvent.type === "file_edit") {
-      if (gap <= 2000) {
-        burstCount++;
-        if (burstCount === 50) {
-          stats.signals.push(`Sustained burst editing detected (high-frequency pattern)`);
-        }
-      } else {
-        burstCount = 0;
-      }
+      stats.signals.push(`Large paste detected at ${time} in ${current.file || "unknown"}`);
     }
 
     if (gap > SESSION_THRESHOLD_MS) {
@@ -74,7 +69,7 @@ export function aggregate(events: DevEvent[], filterProject?: string): DevStats 
         stats.idleMs += current.durationMs ?? 0;
       } else if (lastEvent.type !== "idle_start") {
         stats.totalMs += gap;
-        
+
         const project = current.project;
         stats.byProject[project] = (stats.byProject[project] ?? 0) + gap;
 

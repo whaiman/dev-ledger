@@ -1,8 +1,18 @@
 {
+    "publisher": "whaiman",
     "name": "devledger",
-    "private": true,
-    "version": "0.1.0",
+    "displayName": "DevLedger",
+    "description": "Local-first, cryptographically verified coding activity ledger",
+    "version": "0.2.0",
     "packageManager": "pnpm@9.0.0",
+    "icon": "icon_vsc.png",
+    "readme": "README.md",
+    "engines": {
+        "vscode": "^1.105.0"
+    },
+    "categories": [
+        "Other"
+    ],
     "scripts": {
         "build": "pnpm -r build",
         "dev": "pnpm --filter @devledger/cli dev",
@@ -15,6 +25,12 @@
         "typescript": "^6.0.3"
     },
     "dependencies": {
+        "minimatch": "^10.2.5",
         "pnpm": "^10.33.2"
-    }
+    },
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/whaiman/dev-ledger"
+    },
+    "license": "MIT"
 }

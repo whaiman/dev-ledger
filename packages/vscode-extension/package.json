@@ -1,6 +1,6 @@
 {
     "name": "devledger",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "publisher": "whaiman",
     "displayName": "DevLedger",
     "description": "Local append-only coding activity ledger",
@@ -9,9 +9,19 @@
         "url": "https://github.com/whaiman/dev-ledger"
     },
     "main": "./dist/extension.js",
+    "icon": "icon_vsc.png",
     "activationEvents": [
         "*"
     ],
+    "contributes": {
+        "commands": [
+            {
+                "command": "devledger.showDashboard",
+                "title": "DevLedger: Show Dashboard",
+                "category": "DevLedger"
+            }
+        ]
+    },
     "engines": {
         "vscode": "^1.85.0"
     },

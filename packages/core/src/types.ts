@@ -4,7 +4,8 @@ export type DevEventType =
   | "file_save"
   | "idle_start"
   | "idle_end"
-  | "checkpoint";
+  | "checkpoint"
+  | "edit_telemetry";
 
 export interface DevEvent {
   id: string;

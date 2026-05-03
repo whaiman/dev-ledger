@@ -90,33 +90,6 @@ cd packages/cli && pnpm link --global
 
 ---
 
-## Activity Report
-
-<!-- DEVLEDGER_START -->
-### Activity Summary: dev-ledger
-
-![Activity and Languages](./devledger-activity.svg)
-
-- **Total Events**: 155
-- **Active Sessions**: 1
-- **Total Coding Time**: 5m
-- **Total Idle Time**: 4m
-- **Integrity Hash**: `ed79356eeeffad00886086cdd8a971da7c102f4cd56329e0648093b170c6b7cf`
-- **Summary Hash**: `2a58d156a25da59334fdcbd4ad892790d3515f3a6853d9bfe1bd5166005365a7`
-
-#### Integrity & Behavior (Local AI)
-- **Humanity Score**: 100%
-- Behavioral patterns consistent with human activity
-
-#### Languages
-- **typescript**: 5m
-
-#### Behavior Signals
-- No abnormal patterns detected
-<!-- DEVLEDGER_END -->
-
----
-
 ## Security & Privacy
 
 DevLedger is designed as a trustless auditing tool. While it runs locally, the integrity hash allows for external verification of your activity logs. It is recommended to include the **Integrity Hash** in your project commits to provide a permanent, verifiable record of development effort.

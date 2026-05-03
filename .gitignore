@@ -6,3 +6,5 @@ dist
 devledger-activity.svg
 .DS_Store
 *.log
+report.html
+proof.json

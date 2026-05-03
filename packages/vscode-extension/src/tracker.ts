@@ -1,6 +1,15 @@
 import * as vscode from "vscode";
 import path from "node:path";
-import { DevEventType, EventInput, createEvent, appendEvent, getDefaultLogPath, getLastHash } from "@devledger/core";
+import {
+  DevEventType,
+  EventInput,
+  createEvent,
+  appendEvent,
+  getDefaultLogPath,
+  getLastHash,
+  readEvents,
+  aggregate,
+} from "@devledger/core";
 import { findProjectRoot } from "./project.js";
 
 export interface TrackerOptions {
@@ -28,6 +37,10 @@ export class Tracker implements vscode.Disposable {
   private currentFile: string | undefined;
   private lastEditByFile = new Map<string, number>();
 
+  // Serialise all emit calls through a single promise chain to prevent
+  // race conditions on lastHash when multiple VS Code events fire concurrently.
+  private emitQueue: Promise<void> = Promise.resolve();
+
   constructor(private readonly context: vscode.ExtensionContext, options: TrackerOptions = {}) {
     this.logPath = options.logDir ? path.join(options.logDir, "events.jsonl") : getDefaultLogPath();
 
@@ -36,10 +49,14 @@ export class Tracker implements vscode.Disposable {
     this.editThrottleMs = options.editThrottleMs ?? 1_000;
 
     this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    this.statusBarItem.text = "$(pulse) DevLedger: Tracking";
-    this.statusBarItem.tooltip = "DevLedger is active and tracking coding activity";
+    this.statusBarItem.text = "$(pulse) DevLedger";
+    this.statusBarItem.tooltip = "DevLedger is active";
     this.statusBarItem.show();
     this.disposables.push(this.statusBarItem);
+
+    this.updateStatusBar();
+    const statusTimer = setInterval(() => this.updateStatusBar(), 60_000);
+    this.disposables.push({ dispose: () => clearInterval(statusTimer) });
   }
 
   start(): void {
@@ -73,20 +90,22 @@ export class Tracker implements vscode.Disposable {
 
         const durationMs = this.markActivity();
 
-        // 3.6 Behavior Analysis: Large Paste Detection
         let linesChanged = 0;
-        let charsChanged = 0;
+        let charsAdded = 0;
+        let charsRemoved = 0;
         for (const change of e.contentChanges) {
           linesChanged += change.text.split("\n").length - 1;
-          charsChanged += change.text.length;
+          charsAdded += change.text.length;
+          charsRemoved += change.rangeLength;
         }
 
-        const metadata: Record<string, any> = {
+        const metadata: Record<string, unknown> = {
           lines_changed: linesChanged,
-          chars_changed: charsChanged,
+          chars_added: charsAdded,
+          chars_removed: charsRemoved,
         };
 
-        if (linesChanged > 50 || charsChanged > 2000) {
+        if (linesChanged > 50 || charsAdded > 2000) {
           metadata.is_large_paste = true;
         }
 
@@ -105,7 +124,7 @@ export class Tracker implements vscode.Disposable {
           this.markActivity();
           if (this.idle) {
             this.idle = false;
-            this.statusBarItem.text = "$(pulse) DevLedger: Tracking";
+            this.updateStatusBar();
             this.emitSystem("idle_end", undefined);
           }
         }
@@ -117,12 +136,44 @@ export class Tracker implements vscode.Disposable {
 
       if (!this.idle && idleFor >= this.idleTimeoutMs) {
         this.idle = true;
-        this.statusBarItem.text = "$(CircleSlash) DevLedger: Idle";
+        this.updateStatusBar();
         this.emitSystem("idle_start", idleFor);
       }
     }, this.idleCheckMs);
 
     this.context.subscriptions.push(this);
+  }
+
+  private async updateStatusBar(): Promise<void> {
+    try {
+      const events = await readEvents(this.logPath);
+      const project = vscode.workspace.workspaceFolders?.[0]?.name;
+
+      if (!project) return;
+
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+
+      const todayEvents = events.filter(
+        (e) => e.project === project && e.timestamp >= todayStart.getTime()
+      );
+      const todayStats = aggregate(todayEvents, project);
+
+      const totalMin = Math.floor(todayStats.totalMs / 60_000);
+      const hours = Math.floor(totalMin / 60);
+      const mins = totalMin % 60;
+      const timeStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+
+      if (this.idle) {
+        this.statusBarItem.text = `$(circle-slash) ${timeStr} today`;
+        this.statusBarItem.tooltip = `DevLedger: Idle - ${timeStr} coded today`;
+      } else {
+        this.statusBarItem.text = `$(pulse) ${timeStr} today`;
+        this.statusBarItem.tooltip = `DevLedger: Active - ${timeStr} coded today`;
+      }
+    } catch {
+      this.statusBarItem.text = "$(pulse) DevLedger";
+    }
   }
 
   dispose(): void {
@@ -148,21 +199,35 @@ export class Tracker implements vscode.Disposable {
     this.isInitialized = true;
   }
 
-  private async emit(
+  /**
+   * Public-facing emit: enqueues the work so that concurrent VS Code events
+   * are processed serially. This guarantees `lastHash` is always consistent
+   * and the hash chain is never broken by parallel writes.
+   */
+  private emit(
     type: DevEventType,
     doc?: vscode.TextDocument,
     durationMs?: number,
     language?: string,
-    metadata?: Record<string, any>
+    metadata?: Record<string, unknown>
+  ): void {
+    this.emitQueue = this.emitQueue.then(() =>
+      this._doEmit(type, doc, durationMs, language, metadata)
+    );
+  }
+
+  private async _doEmit(
+    type: DevEventType,
+    doc?: vscode.TextDocument,
+    durationMs?: number,
+    language?: string,
+    metadata?: Record<string, unknown>
   ): Promise<void> {
     const absFile = doc?.isUntitled ? undefined : doc?.fileName;
-
     const projectRoot = absFile ? await findProjectRoot(absFile) : undefined;
-
     if (!projectRoot) return;
 
     const projectName = path.basename(projectRoot);
-
     let displayFile = absFile;
 
     if (absFile && projectRoot) {
@@ -184,10 +249,23 @@ export class Tracker implements vscode.Disposable {
 
     const event = createEvent(input, this.lastHash);
     this.lastHash = event.hash;
-    await appendEvent(event, this.logPath).catch(err => console.error("DevLedger emit error:", err));
+    await appendEvent(event, this.logPath).catch((err) =>
+      console.error("DevLedger emit error:", err)
+    );
   }
 
-  private async emitSystem(type: "idle_start" | "idle_end", durationMs?: number): Promise<void> {
+  /**
+   * System events (idle_start / idle_end) are also routed through the
+   * same queue so they don't race with file events.
+   */
+  private emitSystem(type: "idle_start" | "idle_end", durationMs?: number): void {
+    this.emitQueue = this.emitQueue.then(() => this._doEmitSystem(type, durationMs));
+  }
+
+  private async _doEmitSystem(
+    type: "idle_start" | "idle_end",
+    durationMs?: number
+  ): Promise<void> {
     const project = await this.resolveProject(undefined);
     if (!project) return;
 
@@ -202,7 +280,9 @@ export class Tracker implements vscode.Disposable {
 
     const event = createEvent(input, this.lastHash);
     this.lastHash = event.hash;
-    await appendEvent(event, this.logPath).catch(err => console.error("DevLedger emit error:", err));
+    await appendEvent(event, this.logPath).catch((err) =>
+      console.error("DevLedger emit error:", err)
+    );
   }
 
   private async resolveProject(filePath: string | undefined): Promise<string | undefined> {
@@ -210,7 +290,7 @@ export class Tracker implements vscode.Disposable {
     if (!folders || folders.length === 0) return undefined;
 
     if (!filePath) {
-      // Check if any workspace folder is initialized
+      // Check if any workspace folder is initialized as a DevLedger project
       for (const folder of folders) {
         const root = await findProjectRoot(path.join(folder.uri.fsPath, "dummy.ts"));
         if (root) return path.basename(root);
@@ -219,10 +299,7 @@ export class Tracker implements vscode.Disposable {
     }
 
     const projectRoot = await findProjectRoot(filePath);
-    if (projectRoot) {
-      return path.basename(projectRoot);
-    }
-
+    if (projectRoot) return path.basename(projectRoot);
     return undefined;
   }
 }

@@ -4,3 +4,5 @@ export { getDefaultLogPath, ensureLogDir, appendEvent, readEvents, getLastHash }
 export * from "./aggregator.js";
 export * from "./visualizer.js";
 export * from "./verify.js";
+export * from "./behavior-analyzer.js";
+export * from "./behavior-report.js";
